@@ -1,38 +1,15 @@
 import { NOT_FOUND_MESSAGE } from "@/lib/generation/constants";
 import { buildContext } from "@/lib/generation/context";
 import { generateAnswer } from "@/lib/generation/gemini";
+import { resolveStandaloneQuery } from "@/lib/generation/queryResolution";
 import { DEFAULT_TOP_K } from "@/lib/retrieval/constants";
 import { searchChunks } from "@/lib/retrieval/search";
 import { MAX_HISTORY_MESSAGES } from "./constants";
 import type { ChatAnswer, ChatSource, ConversationMessage } from "./types";
 
 /**
- * Builds the text used for retrieval when there's conversation history.
- * A bare follow-up like "What are its limitations?" embeds poorly on its
- * own (nothing for the vector search to latch onto), so recent turns are
- * folded in ahead of the current question purely to give retrieval enough
- * signal to find the right chunks. With no history this returns `query`
- * unchanged, so behavior for a plain {query}-only request is identical to
- * before this milestone.
- *
- * This does not change `searchChunks` itself at all — it's still called
- * exactly the same way, just with a richer input string.
- */
-function buildRetrievalQuery(query: string, history: ConversationMessage[]): string {
-  if (history.length === 0) {
-    return query;
-  }
-
-  const transcript = history
-    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
-    .join("\n");
-
-  return `${transcript}\nUser: ${query}`;
-}
-
-/**
- * The RAG answer-generation flow: retrieve → build grounded context →
- * generate → attach sources.
+ * The RAG answer-generation flow: resolve → retrieve → build grounded
+ * context → generate → attach sources.
  *
  * `history` is optional, recent conversation turns (already trimmed by the
  * caller, but re-trimmed here defensively) used ONLY to help interpret the
@@ -42,11 +19,22 @@ function buildRetrievalQuery(query: string, history: ConversationMessage[]): str
  * chunks) remain the only evidence the answer can be based on. Nothing is
  * persisted — history lives only for the duration of this call.
  *
+ * Retrieval uses a *resolved* standalone version of the question (see
+ * lib/generation/queryResolution.ts) rather than the raw conversation
+ * transcript, so the vector search stays focused on the user's current
+ * intent instead of being diluted by unrelated earlier turns.
+ * `searchChunks` itself is unchanged — this only changes what text is fed
+ * into it.
+ *
  * Source metadata in the response comes directly from the retrieval
  * results — never from the LLM's own output — so every returned source is
  * guaranteed to have actually come from retrieval, and the model has no
- * opportunity to invent or alter a citation. This is unchanged by this
- * milestone.
+ * opportunity to invent or alter a citation. The one exception: when the
+ * model determines the retrieved context doesn't actually support an
+ * answer (it responds with the fixed NOT_FOUND_MESSAGE), the retrieved
+ * chunks are discarded from the response entirely — they were candidates,
+ * not evidence the answer relies on, so they must not be shown as if they
+ * were.
  */
 export async function answerQuery(
   query: string,
@@ -54,7 +42,7 @@ export async function answerQuery(
 ): Promise<ChatAnswer> {
   const recentHistory = history.slice(-MAX_HISTORY_MESSAGES);
 
-  const retrievalQuery = buildRetrievalQuery(query, recentHistory);
+  const retrievalQuery = await resolveStandaloneQuery(query, recentHistory);
   const chunks = await searchChunks(retrievalQuery, DEFAULT_TOP_K);
 
   if (chunks.length === 0) {
@@ -66,13 +54,21 @@ export async function answerQuery(
   const context = buildContext(chunks);
   const answer = await generateAnswer(query, context, recentHistory);
 
-  const sources: ChatSource[] = chunks.map((chunk) => ({
-    chunkId: chunk.chunkId,
-    documentId: chunk.documentId,
-    filename: chunk.filename,
-    pageNumber: chunk.pageNumber,
-    similarity: chunk.similarity,
-  }));
+  // The model was instructed to respond with exactly NOT_FOUND_MESSAGE when
+  // the retrieved context doesn't support an answer. When that happens, the
+  // chunks we retrieved were not actually relevant evidence for the answer
+  // given — don't present them to the client as if they were sources.
+  const isNotFound = answer.trim() === NOT_FOUND_MESSAGE;
+
+  const sources: ChatSource[] = isNotFound
+    ? []
+    : chunks.map((chunk) => ({
+        chunkId: chunk.chunkId,
+        documentId: chunk.documentId,
+        filename: chunk.filename,
+        pageNumber: chunk.pageNumber,
+        similarity: chunk.similarity,
+      }));
 
   return { answer, sources };
 }
