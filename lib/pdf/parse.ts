@@ -1,5 +1,7 @@
 import { PDFParse } from "pdf-parse";
+import { findDocumentByHash, insertDocument } from "@/lib/documents/store";
 import { MAX_PDF_FILE_SIZE_BYTES } from "./constants";
+import { sha256Hex } from "./hash";
 import type { PdfExtractionResult } from "./types";
 
 /** The literal bytes every valid PDF file starts with. */
@@ -68,14 +70,57 @@ async function extractPdfText(buffer: Buffer): Promise<{ numPages: number; pages
 }
 
 /**
- * Validates and processes a single uploaded PDF, never throwing — any
- * failure (invalid file, corrupted PDF, parse error) is captured in the
- * returned result so one bad file never fails the whole batch.
+ * Validates, de-duplicates, records, and processes a single uploaded PDF.
+ * Never throws — any failure (invalid file, database error, corrupted PDF,
+ * parse error) is captured in the returned result so one bad file never
+ * fails the whole batch.
+ *
+ * Flow:
+ * 1. Validate the file looks like a PDF.
+ * 2. Hash its bytes (SHA-256) and look it up in `documents`.
+ * 3. If a matching row already exists, skip extraction entirely and report
+ *    the file as a duplicate (no new row, no re-processing).
+ * 4. Otherwise insert a new `documents` row for this hash, then run the
+ *    existing text-extraction flow.
  */
 export async function processPdfFile(filename: string, buffer: Buffer): Promise<PdfExtractionResult> {
   const validationError = validatePdfFile(filename, buffer);
   if (validationError) {
     return { filename, status: "error", error: validationError };
+  }
+
+  const hash = sha256Hex(buffer);
+
+  let existing;
+  try {
+    existing = await findDocumentByHash(hash);
+  } catch (err) {
+    return {
+      filename,
+      status: "error",
+      error: err instanceof Error ? err.message : "Database error while checking for an existing document.",
+    };
+  }
+
+  if (existing) {
+    return {
+      filename,
+      status: "duplicate",
+      message: "This exact PDF was already processed previously; skipping re-processing.",
+      documentId: existing.id,
+      hash,
+    };
+  }
+
+  let document;
+  try {
+    document = await insertDocument(filename, hash);
+  } catch (err) {
+    return {
+      filename,
+      status: "error",
+      error: err instanceof Error ? err.message : "Database error while saving the document record.",
+    };
   }
 
   try {
@@ -85,7 +130,7 @@ export async function processPdfFile(filename: string, buffer: Buffer): Promise<
       return { filename, status: "error", error: "No pages could be read from this PDF." };
     }
 
-    return { filename, status: "success", numPages, pages };
+    return { filename, status: "success", numPages, pages, documentId: document.id, hash };
   } catch (err) {
     return {
       filename,

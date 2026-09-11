@@ -13,6 +13,17 @@ export interface PdfExtractionSuccess {
   status: "success";
   numPages: number;
   pages: PdfPageText[];
+  documentId: number;
+  hash: string;
+}
+
+/** The file's content hash already matched an existing `documents` row — it was not re-processed. */
+export interface PdfExtractionDuplicate {
+  filename: string;
+  status: "duplicate";
+  message: string;
+  documentId: number;
+  hash: string;
 }
 
 export interface PdfExtractionError {
@@ -21,7 +32,7 @@ export interface PdfExtractionError {
   error: string;
 }
 
-export type PdfExtractionResult = PdfExtractionSuccess | PdfExtractionError;
+export type PdfExtractionResult = PdfExtractionSuccess | PdfExtractionDuplicate | PdfExtractionError;
 
 export interface PdfUploadResponse {
   count: number;

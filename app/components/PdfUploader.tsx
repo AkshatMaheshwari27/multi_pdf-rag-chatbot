@@ -114,11 +114,17 @@ export default function PdfUploader() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-medium text-black dark:text-zinc-50">{result.filename}</p>
 
-                {result.status === "success" ? (
+                {result.status === "success" && (
                   <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
                     {result.numPages} page{result.numPages === 1 ? "" : "s"}
                   </span>
-                ) : (
+                )}
+                {result.status === "duplicate" && (
+                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    Already processed
+                  </span>
+                )}
+                {result.status === "error" && (
                   <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-300">
                     Failed
                   </span>
@@ -127,6 +133,12 @@ export default function PdfUploader() {
 
               {result.status === "error" && (
                 <p className="mt-2 text-sm text-red-700 dark:text-red-300">{result.error}</p>
+              )}
+
+              {result.status === "duplicate" && (
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  {result.message} (document id {result.documentId})
+                </p>
               )}
 
               {result.status === "success" && (
