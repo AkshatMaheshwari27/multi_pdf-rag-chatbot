@@ -213,19 +213,23 @@ There is no automated test suite (unit/integration tests) in this repository. In
 
 ## 14. Screenshots
 
-> Screenshots to be added.
+### Main Interface
 
-### Upload flow
+![Main interface](screenshots/01-main-interface.png)
 
-_Placeholder — screenshot to be added._
+The PDF upload panel and the list of processed documents after uploading four PDFs — filename, page count, and chunk count for each.
 
-### Chat interface
+### RAG Answer with Source
 
-_Placeholder — screenshot to be added._
+![RAG answer with source](screenshots/02-rag-answer.png)
 
-### Sources and citations
+The question "Which planet is the largest in the solar system?" answered as "Jupiter is the largest planet in the solar system.", with its source shown as `solar-system.pdf, page 1`.
 
-_Placeholder — screenshot to be added._
+### Grounded Response
+
+![Grounded response for an unsupported question](screenshots/03-grounding.png)
+
+An unsupported question, "What is the capital city of Japan?", correctly answered with "The information was not found in the uploaded documents." instead of a guess.
 
 ## 15. Limitations
 

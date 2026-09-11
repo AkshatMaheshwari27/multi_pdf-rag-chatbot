@@ -4,8 +4,20 @@ import { generateAnswer } from "@/lib/generation/gemini";
 import { resolveStandaloneQuery } from "@/lib/generation/queryResolution";
 import { DEFAULT_TOP_K } from "@/lib/retrieval/constants";
 import { searchChunks } from "@/lib/retrieval/search";
-import { MAX_HISTORY_MESSAGES } from "./constants";
+import { MAX_HISTORY_MESSAGES, MIN_SOURCE_SIMILARITY } from "./constants";
 import type { ChatAnswer, ChatSource, ConversationMessage } from "./types";
+
+/**
+ * Drops sources whose similarity falls below MIN_SOURCE_SIMILARITY —
+ * candidates that only made the Top-K cut, not chunks that actually look
+ * relevant to the question. Purely a display-layer concern, applied after
+ * dedup: it only removes entries from the `sources` array returned to the
+ * client and never touches the retrieved `chunks` or the context built
+ * from them for Gemini.
+ */
+function filterLowRelevanceSources(sources: ChatSource[]): ChatSource[] {
+  return sources.filter((source) => source.similarity >= MIN_SOURCE_SIMILARITY);
+}
 
 /**
  * Collapses sources that share the same filename + page number down to one
@@ -59,11 +71,16 @@ function dedupeSourcesByFilenameAndPage(sources: ChatSource[]): ChatSource[] {
  * not evidence the answer relies on, so they must not be shown as if they
  * were.
  *
- * The `sources` list is also deduplicated by filename + page number (see
- * dedupeSourcesByFilenameAndPage) before being returned, since Top-K can
- * retrieve more than one chunk from the same page. This is a display-only
- * step applied after generation — the full, undeduplicated `chunks` list
- * is still what's used to build the context sent to Gemini.
+ * The `sources` list is also, before being returned: (1) deduplicated by
+ * filename + page number (see dedupeSourcesByFilenameAndPage), since Top-K
+ * can retrieve more than one chunk from the same page, and (2) filtered to
+ * drop low-relevance candidates (see filterLowRelevanceSources /
+ * MIN_SOURCE_SIMILARITY) — Top-K always returns exactly K candidates
+ * regardless of how weak a match is, and a candidate merely filling out
+ * the quota isn't necessarily evidence the answer relied on. Both are
+ * display-only steps applied after generation — the full, unfiltered
+ * `chunks` list is still what's used to build the context sent to Gemini,
+ * so the answer itself is unaffected by either step.
  */
 export async function answerQuery(
   query: string,
@@ -91,14 +108,16 @@ export async function answerQuery(
 
   const sources: ChatSource[] = isNotFound
     ? []
-    : dedupeSourcesByFilenameAndPage(
-        chunks.map((chunk) => ({
-          chunkId: chunk.chunkId,
-          documentId: chunk.documentId,
-          filename: chunk.filename,
-          pageNumber: chunk.pageNumber,
-          similarity: chunk.similarity,
-        }))
+    : filterLowRelevanceSources(
+        dedupeSourcesByFilenameAndPage(
+          chunks.map((chunk) => ({
+            chunkId: chunk.chunkId,
+            documentId: chunk.documentId,
+            filename: chunk.filename,
+            pageNumber: chunk.pageNumber,
+            similarity: chunk.similarity,
+          }))
+        )
       );
 
   return { answer, sources };
