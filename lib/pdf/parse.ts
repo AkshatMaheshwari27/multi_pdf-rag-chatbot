@@ -1,4 +1,6 @@
 import { PDFParse } from "pdf-parse";
+import { chunkPages } from "@/lib/chunking/chunkText";
+import { insertChunks } from "@/lib/chunks/store";
 import { findDocumentByHash, insertDocument } from "@/lib/documents/store";
 import { MAX_PDF_FILE_SIZE_BYTES } from "./constants";
 import { sha256Hex } from "./hash";
@@ -81,7 +83,8 @@ async function extractPdfText(buffer: Buffer): Promise<{ numPages: number; pages
  * 3. If a matching row already exists, skip extraction entirely and report
  *    the file as a duplicate (no new row, no re-processing).
  * 4. Otherwise insert a new `documents` row for this hash, then run the
- *    existing text-extraction flow.
+ *    existing text-extraction flow, split the result into chunks, and store
+ *    those chunks (embedding left NULL — that's a later stage).
  */
 export async function processPdfFile(filename: string, buffer: Buffer): Promise<PdfExtractionResult> {
   const validationError = validatePdfFile(filename, buffer);
@@ -123,14 +126,14 @@ export async function processPdfFile(filename: string, buffer: Buffer): Promise<
     };
   }
 
+  let numPages: number;
+  let pages: { page: number; text: string }[];
   try {
-    const { numPages, pages } = await extractPdfText(buffer);
+    ({ numPages, pages } = await extractPdfText(buffer));
 
     if (numPages === 0 || pages.length === 0) {
       return { filename, status: "error", error: "No pages could be read from this PDF." };
     }
-
-    return { filename, status: "success", numPages, pages, documentId: document.id, hash };
   } catch (err) {
     return {
       filename,
@@ -138,4 +141,28 @@ export async function processPdfFile(filename: string, buffer: Buffer): Promise<
       error: err instanceof Error ? err.message : "Failed to parse PDF (corrupted or unsupported file).",
     };
   }
+
+  const chunks = chunkPages(pages);
+
+  try {
+    await insertChunks(document.id, chunks);
+  } catch (err) {
+    // Extraction succeeded but the chunks didn't make it to the database —
+    // report a clear failure rather than a success that isn't fully saved.
+    return {
+      filename,
+      status: "error",
+      error: err instanceof Error ? err.message : "Database error while saving chunks.",
+    };
+  }
+
+  return {
+    filename,
+    status: "success",
+    numPages,
+    pages,
+    documentId: document.id,
+    hash,
+    chunkCount: chunks.length,
+  };
 }

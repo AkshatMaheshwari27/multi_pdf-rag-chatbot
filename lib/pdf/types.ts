@@ -15,6 +15,7 @@ export interface PdfExtractionSuccess {
   pages: PdfPageText[];
   documentId: number;
   hash: string;
+  chunkCount: number;
 }
 
 /** The file's content hash already matched an existing `documents` row — it was not re-processed. */

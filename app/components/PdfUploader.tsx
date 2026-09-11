@@ -116,7 +116,8 @@ export default function PdfUploader() {
 
                 {result.status === "success" && (
                   <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300">
-                    {result.numPages} page{result.numPages === 1 ? "" : "s"}
+                    {result.numPages} page{result.numPages === 1 ? "" : "s"} · {result.chunkCount} chunk
+                    {result.chunkCount === 1 ? "" : "s"}
                   </span>
                 )}
                 {result.status === "duplicate" && (
