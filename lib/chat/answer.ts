@@ -8,6 +8,29 @@ import { MAX_HISTORY_MESSAGES } from "./constants";
 import type { ChatAnswer, ChatSource, ConversationMessage } from "./types";
 
 /**
+ * Collapses sources that share the same filename + page number down to one
+ * entry (keeping whichever has the higher similarity), so a Top-K result
+ * containing multiple chunks from the same page doesn't show duplicate
+ * citations in the UI. Purely a display-layer concern: this only reshapes
+ * the `sources` array returned to the client — it never touches the
+ * retrieved `chunks` themselves, so the context built for Gemini (and thus
+ * the answer) is unaffected.
+ */
+function dedupeSourcesByFilenameAndPage(sources: ChatSource[]): ChatSource[] {
+  const bestByKey = new Map<string, ChatSource>();
+
+  for (const source of sources) {
+    const key = `${source.filename}::${source.pageNumber}`;
+    const existing = bestByKey.get(key);
+    if (!existing || source.similarity > existing.similarity) {
+      bestByKey.set(key, source);
+    }
+  }
+
+  return Array.from(bestByKey.values()).sort((a, b) => b.similarity - a.similarity);
+}
+
+/**
  * The RAG answer-generation flow: resolve → retrieve → build grounded
  * context → generate → attach sources.
  *
@@ -35,6 +58,12 @@ import type { ChatAnswer, ChatSource, ConversationMessage } from "./types";
  * chunks are discarded from the response entirely — they were candidates,
  * not evidence the answer relies on, so they must not be shown as if they
  * were.
+ *
+ * The `sources` list is also deduplicated by filename + page number (see
+ * dedupeSourcesByFilenameAndPage) before being returned, since Top-K can
+ * retrieve more than one chunk from the same page. This is a display-only
+ * step applied after generation — the full, undeduplicated `chunks` list
+ * is still what's used to build the context sent to Gemini.
  */
 export async function answerQuery(
   query: string,
@@ -62,13 +91,15 @@ export async function answerQuery(
 
   const sources: ChatSource[] = isNotFound
     ? []
-    : chunks.map((chunk) => ({
-        chunkId: chunk.chunkId,
-        documentId: chunk.documentId,
-        filename: chunk.filename,
-        pageNumber: chunk.pageNumber,
-        similarity: chunk.similarity,
-      }));
+    : dedupeSourcesByFilenameAndPage(
+        chunks.map((chunk) => ({
+          chunkId: chunk.chunkId,
+          documentId: chunk.documentId,
+          filename: chunk.filename,
+          pageNumber: chunk.pageNumber,
+          similarity: chunk.similarity,
+        }))
+      );
 
   return { answer, sources };
 }
