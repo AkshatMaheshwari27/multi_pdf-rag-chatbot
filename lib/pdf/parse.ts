@@ -1,7 +1,8 @@
 import { PDFParse } from "pdf-parse";
 import { chunkPages } from "@/lib/chunking/chunkText";
-import { insertChunks } from "@/lib/chunks/store";
+import { insertChunks, type EmbeddedChunk } from "@/lib/chunks/store";
 import { findDocumentByHash, insertDocument } from "@/lib/documents/store";
+import { embedTexts } from "@/lib/embeddings/gemini";
 import { MAX_PDF_FILE_SIZE_BYTES } from "./constants";
 import { sha256Hex } from "./hash";
 import type { PdfExtractionResult } from "./types";
@@ -83,8 +84,9 @@ async function extractPdfText(buffer: Buffer): Promise<{ numPages: number; pages
  * 3. If a matching row already exists, skip extraction entirely and report
  *    the file as a duplicate (no new row, no re-processing).
  * 4. Otherwise insert a new `documents` row for this hash, then run the
- *    existing text-extraction flow, split the result into chunks, and store
- *    those chunks (embedding left NULL — that's a later stage).
+ *    existing text-extraction flow, split the result into chunks, generate
+ *    a Gemini embedding for each chunk, and store chunks + embeddings
+ *    together.
  */
 export async function processPdfFile(filename: string, buffer: Buffer): Promise<PdfExtractionResult> {
   const validationError = validatePdfFile(filename, buffer);
@@ -144,11 +146,27 @@ export async function processPdfFile(filename: string, buffer: Buffer): Promise<
 
   const chunks = chunkPages(pages);
 
+  let embeddedChunks: EmbeddedChunk[];
   try {
-    await insertChunks(document.id, chunks);
+    const embeddings = await embedTexts(chunks.map((chunk) => chunk.content));
+    embeddedChunks = chunks.map((chunk, i) => ({ ...chunk, embedding: embeddings[i] }));
   } catch (err) {
-    // Extraction succeeded but the chunks didn't make it to the database —
-    // report a clear failure rather than a success that isn't fully saved.
+    // Extraction and chunking succeeded but embedding generation failed —
+    // report a clear failure rather than storing chunks without embeddings
+    // and calling it a success.
+    return {
+      filename,
+      status: "error",
+      error: err instanceof Error ? err.message : "Failed to generate chunk embeddings.",
+    };
+  }
+
+  try {
+    await insertChunks(document.id, embeddedChunks);
+  } catch (err) {
+    // Extraction/embedding succeeded but the chunks didn't make it to the
+    // database — report a clear failure rather than a success that isn't
+    // fully saved.
     return {
       filename,
       status: "error",
