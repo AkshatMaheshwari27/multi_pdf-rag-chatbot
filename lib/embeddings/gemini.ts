@@ -18,6 +18,14 @@ if (!apiKey) {
 
 const client = new GoogleGenAI({ apiKey });
 
+/**
+ * The shared, server-only Gemini client (API key + browser guard already
+ * applied above). Exported so other server-side Gemini use — e.g. answer
+ * generation in lib/generation — reuses this one authenticated client
+ * instead of constructing a second one.
+ */
+export const geminiClient = client;
+
 /** Calls Gemini once for up to EMBEDDING_BATCH_SIZE texts, in order. */
 async function embedBatch(texts: string[]): Promise<number[][]> {
   const response = await client.models.embedContent({
