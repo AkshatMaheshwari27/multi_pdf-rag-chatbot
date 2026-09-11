@@ -1,3 +1,4 @@
+import Chat from "@/app/components/Chat";
 import PdfUploader from "@/app/components/PdfUploader";
 
 export default function Home() {
@@ -6,15 +7,16 @@ export default function Home() {
       <main className="flex w-full max-w-3xl flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-2 text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-black dark:text-zinc-50">
-            PDF Upload &amp; Text Extraction
+            Multi-PDF RAG Chatbot
           </h1>
           <p className="max-w-md text-zinc-600 dark:text-zinc-400">
-            Select up to 50 PDF files. Each file is validated and parsed
-            page-by-page on the server.
+            Upload PDFs, then ask questions. Answers are grounded in your
+            documents, with sources cited for every response.
           </p>
         </div>
 
         <PdfUploader />
+        <Chat />
       </main>
     </div>
   );
