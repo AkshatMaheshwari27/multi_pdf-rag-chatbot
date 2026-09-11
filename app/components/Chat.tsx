@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import type { ChatSource } from "@/lib/chat/types";
+import { MAX_HISTORY_MESSAGES } from "@/lib/chat/constants";
+import type { ChatSource, ConversationMessage } from "@/lib/chat/types";
 
 interface ChatMessage {
   id: string;
@@ -34,6 +35,16 @@ export default function Chat() {
       return;
     }
 
+    // Conversation history sent to the backend is everything so far (this
+    // component's own state), excluding failed exchanges — an error bubble
+    // isn't real assistant content and shouldn't be fed back in as context.
+    // The server re-trims to the same window regardless, but trimming here
+    // too keeps the request small.
+    const history: ConversationMessage[] = messages
+      .filter((message) => !message.isError)
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map((message) => ({ role: message.role, content: message.content }));
+
     setMessages((prev) => [...prev, { id: makeId(), role: "user", content: question }]);
     setInput("");
     setIsLoading(true);
@@ -43,7 +54,7 @@ export default function Chat() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: question }),
+        body: JSON.stringify({ query: question, history }),
       });
 
       const data: { answer?: string; sources?: ChatSource[]; error?: string } = await response.json();
